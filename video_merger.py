@@ -48,7 +48,6 @@ def main(args):
     else:
         final_video = final_video_segments[0]
 
-    # TODO: 背景音乐是否需要和视频一样支持合并（合并时可以乱序）
     audios = get_files(args.audio)
     if not audios:
         os.remove(des_file)
@@ -229,11 +228,11 @@ if __name__ == '__main__':
     parser.add_argument('-s', '--scale', metavar='video resolution',
                         help='导出文件分辨率(默认为所有视频中最大的分辨率): 如1280:720')
     parser.add_argument('-d', metavar='dest file',
-                        help='导出文件路径(默认为当前目录)')
+                        help='导出文件路径(默认为当前目录下output.mp4)')
     parser.add_argument('-r', '--raw', default=False, action='store_true',
-                        help='不进行重编码,快速合并')
+                        help='不进行重编码,快速合并(默认为进行重编码)')
     parser.add_argument('-a', '--random', default=True, action='store_false',
-                        help='不进行重编码,快速合并')
+                        help='音频拼接时是否乱序(默认为乱序)')
 
     arg = parser.parse_args()
     main(arg)
