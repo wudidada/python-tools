@@ -1,14 +1,15 @@
 import argparse
 import json
 import os
+import random
 import subprocess
 import sys
 
 video_list = 'video.txt'
-input_audio = 'audio.txt'
+audio_list = 'audio.txt'
+temp_dir = 'merge_temp'
 temp_video = 'temp.mp4'
 temp_audio = 'temp.aac'
-temp_dir = 'merge_temp'
 
 
 def main(args):
@@ -18,7 +19,6 @@ def main(args):
     if not input_video:
         exit('视频文件路径错误')
 
-    # TODO: 未设置分辨率时实现分辨率自动配置，取视频文件中最大分辨率
     if args.scale:
         width, height = map(int, args.scale.split(':'))
     else:
@@ -34,18 +34,68 @@ def main(args):
 
     final_video_segments = input_video
     if not args.raw:
+        print(' > 开始重编码视频')
         scaled_videos = scale_videos(width, height, input_video)
         if not scaled_videos:
             exit('重编码视频时出错')
         final_video_segments = scaled_videos
 
     # TODO: 稳定运行后需要删除临时视频文件
-    merge_videos(final_video_segments, temp_video)
+    final_video = temp_video
+    print(' > 开始合并视频片段')
+    if len(final_video_segments) > 1:
+        concat_videos(final_video_segments, temp_video)
+    else:
+        final_video = final_video_segments[0]
 
     # TODO: 背景音乐是否需要和视频一样支持合并（合并时可以乱序）
     audios = get_files(args.audio)
-    if audios:
-        os.system(f"ffmpeg -y -i {temp_video} -i {audios[0]} -map 0:v:0 -map 1:a:0 -c copy {des_file}")
+    if not audios:
+        os.remove(des_file)
+        os.rename(final_video, des_file)
+        return
+
+    video_duration = get_duration(temp_video)
+    extend_audio_list = make_audio_list(audios, video_duration, args.random)
+    print(' > 开始对音频转码')
+    final_audio_segments = encode_audios(extend_audio_list)
+
+    if final_audio_segments:
+        print(' > 开始合并音频片段')
+        final_audio = temp_audio
+        if len(final_audio_segments) > 1:
+            concat_audios(final_audio_segments, final_audio)
+        else:
+            final_audio = final_audio_segments[0]
+        merge(final_video, final_audio, des_file)
+
+
+def merge(video, audio, des):
+    subprocess.run(f"ffmpeg -y -i {video} -i {audio} -map 0:v:0 -map 1:a:0 -c copy -shortest {des}")
+
+
+def make_audio_list(audios, time, rand=True):
+    def func(n):
+        while True:
+            index = [i for i in range(n)]
+            if rand:
+                random.shuffle(index)
+            while len(index) > 0:
+                yield index.pop()
+
+    rest = time
+    times = [get_duration(a) for a in audios]
+    audio_time = list(zip(audios, times))
+    audio_time = list(filter(lambda x: x[1] > 0, audio_time))
+    res_list = []
+
+    gen = func(len(audios))
+    while rest > 0:
+        num = next(gen)
+        res_list.append(audio_time[num][0])
+        rest -= audio_time[num][1]
+
+    return res_list
 
 
 def get_files(sources: list) -> list:
@@ -107,31 +157,67 @@ def get_duration(media):
                                   f'"{media}"')
     try:
         d = json.loads(res)
-        duration = d['streams'][0]['duration']
+        duration = float(d['streams'][0]['duration'])
     except (json.JSONDecodeError, AttributeError):
         pass
 
     return duration
 
 
-def merge_videos(videos: list, des: str, temp=video_list) -> bool:
+def concat_videos(videos: list, des: str, temp=video_list) -> bool:
+    if not videos:
+        return True
+
     make_file(videos, temp)
     task = subprocess.run(f"ffmpeg -y -f concat -safe 0 -i {temp} -c copy {des}", shell=True)
     return task.returncode == 0
 
 
-def scale_videos(width, height, videos, temp_folder=temp_dir):
-    scaled_files = []
-    num = 1
-    for v in videos:
-        temp_file = temp_folder + os.path.sep + str(num).zfill(4) + '.mp4'
-        os.system(f'ffmpeg -i "{v}" -vf "scale=(iw*sar)*min({width}/(iw*sar)\\,{height}/ih):ih*min({width}/(iw*sar)\\,'
-                  f'{height}/ih), pad={width}:{height}:({width}-iw*min({width}/iw\\,{height}/ih))/2:({height}'
-                  f'-ih*min({width}/iw\\,{height}/ih))/2" {temp_file}')
-        num += 1
-        scaled_files.append(temp_file)
+def concat_audios(audios: list, des: str, temp=audio_list) -> bool:
+    if not audios:
+        return True
 
-    return scaled_files
+    make_file(audios, temp)
+    task = subprocess.run(f"ffmpeg -y -f concat -safe 0 -i {temp} -c copy {des}", shell=True)
+    return task.returncode == 0
+
+
+def scale_videos(width, height, videos, temp_folder=temp_dir):
+    args = ['-vf', f'scale=(iw*sar)*min(1280/(iw*sar)\\,720/ih):ih*min(1280/(iw*sar)\\,720/ih), pad=1280:720:('
+                   f'1280-iw*min(1280/iw\\,720/ih))/2:(720-ih*min(1280/iw\\,720/ih))/2',
+            '-y']
+    ext = get_ext(temp_video)
+
+    return trans_media(videos, args, ext, temp_folder)
+
+
+def encode_audios(audios, temp_folder=temp_dir):
+    args = ['-c:a', 'aac', '-y']
+    ext = get_ext(temp_audio)
+    return trans_media(audios, args, ext, temp_folder)
+
+
+def get_ext(file):
+    i = file.rindex('.')
+    return file[i + 1:]
+
+
+def trans_media(files, cmd, ext, temp_folder=temp_dir):
+    num, res, cache = 0, [], {}
+    for file in files:
+        if file in cache:
+            res.append(cache[file])
+        else:
+            num += 1
+            temp_file = os.path.join(temp_folder, str(num).zfill(4)) + '.' + ext
+            full_cmd = ['ffmpeg', '-i', file]
+            full_cmd.extend(cmd)
+            full_cmd.append(temp_file)
+            subprocess.run(full_cmd, shell=True)
+
+            res.append(temp_file)
+            cache.update({file: temp_file})
+    return res
 
 
 if __name__ == '__main__':
@@ -145,6 +231,8 @@ if __name__ == '__main__':
     parser.add_argument('-d', metavar='dest file',
                         help='导出文件路径(默认为当前目录)')
     parser.add_argument('-r', '--raw', default=False, action='store_true',
+                        help='不进行重编码,快速合并')
+    parser.add_argument('-a', '--random', default=True, action='store_false',
                         help='不进行重编码,快速合并')
 
     arg = parser.parse_args()
