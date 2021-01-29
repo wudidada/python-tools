@@ -20,10 +20,12 @@
 ```
 python video_merger.py video music -d output.mp4	# 合并video目录下所有视频文件,并将视频声音替换为music目录下音频,输出文件为output.mp4
                                                         # 输入视频支持目录或文件名,可多项; 输入音频支持目录或文件,在视频文件后,只能一项。														
+
 python video_merger.py -h				# 查看帮助
 
-python video_merger.py video music -s 1920:1080		# 合成为1920x1080分辨率，输出文件为默认为output.mp4
-python video_merger.py video none -s -r			# 不进行重编码直接将视频文件合并，且不替换视频原有声音。
+python video_merger.py video music -s 1920:1080		# 合成为1920x1080分辨率，输出文件为默认的output.mp4
+
+python video_merger.py video none -r			# 不进行重编码直接将视频文件合并，且不替换视频原有声音。
                                                         # 在视频分享率相同时使用-r选项会极大加快合并速度；若指定的音频文件不存在则不替换音轨。
 ```
 
